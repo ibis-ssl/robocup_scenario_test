@@ -15,6 +15,7 @@
 import threading
 import time
 
+from .field_geometry import FieldGeometry
 from .referee_sender import RefereeSender
 from .sim_referee import SimReferee
 from .sim_sender import SimSender
@@ -47,6 +48,35 @@ class Communication:
 
     def send_simulator_command(self, world: SimWorld):
         self._sim_sender.send(world.to_sim_command_packet_string())
+
+    def wait_for_geometry(self, timeout: float = 10.0) -> FieldGeometry:
+        """Block until vision reports the field dimensions, and return them.
+
+        A scenario test must place the ball and the robots in the field it is
+        actually running on. The simulator clamps a teleport that lands outside
+        the field instead of rejecting it, so coordinates written for the wrong
+        division produce a world that quietly differs from the one the test
+        asked for -- the ball ends up against the wall, and the test fails for a
+        reason that has nothing to do with the behaviour under test.
+
+        This raises on timeout rather than returning a default field size: a
+        guessed field is the very thing that failure mode is made of.
+
+        Call it after `start_thread()`; geometry is published less often than
+        detections, so it can take a moment to arrive.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            geometry = self.observer.get_field_geometry()
+            if geometry is not None:
+                return geometry
+            time.sleep(0.05)
+
+        raise TimeoutError(
+            "No vision geometry packet arrived within {} s. The field "
+            "dimensions are unknown, so the test cannot place anything "
+            "safely. Check that the vision source is running and that "
+            "vision_addr/vision_port point at it.".format(timeout))
 
     def start_thread(self):
         self._thread_running = True
