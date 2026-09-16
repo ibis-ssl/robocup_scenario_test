@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
+from typing import List, Optional
 
 from .ball import Ball
+from .field_geometry import FieldGeometry
 from .robot import Robot
 from .robot import RobotDict
 
 from .proto.ssl_vision_detection_pb2 import SSL_DetectionBall
 from .proto.ssl_vision_detection_pb2 import SSL_DetectionFrame
 from .proto.ssl_vision_detection_pb2 import SSL_DetectionRobot
+from .proto.ssl_vision_geometry_pb2 import SSL_GeometryData
 from .proto.ssl_vision_wrapper_pb2 import SSL_WrapperPacket
 
 
@@ -46,6 +48,7 @@ class VisionWorld:
         self._robot_timeout = robot_timeout
         self._blue_last_seen: dict[int, float] = {}
         self._yellow_last_seen: dict[int, float] = {}
+        self._field_geometry: Optional[FieldGeometry] = None
 
     def update_with_vision_packet(self, data: bytes) -> None:
         packet = SSL_WrapperPacket()
@@ -58,6 +61,9 @@ class VisionWorld:
         if packet.HasField("detection"):
             self._update_with_detection_frame(packet.detection)
 
+        if packet.HasField("geometry"):
+            self._update_with_geometry(packet.geometry)
+
     def get_ball(self) -> Ball:
         return self._ball[0]
 
@@ -69,6 +75,15 @@ class VisionWorld:
 
     def get_timestamp(self) -> float:
         return self._timestamp
+
+    def get_field_geometry(self) -> Optional[FieldGeometry]:
+        """Field dimensions, or None until the first geometry packet arrives.
+
+        Geometry is published far less often than detections, so a caller that
+        needs it right after start-up should wait for it rather than treat None
+        as a reason to fall back to a guessed field size.
+        """
+        return self._field_geometry
 
     def _update_with_detection_frame(self, detection: SSL_DetectionFrame) -> None:
         for ball in detection.balls:
@@ -84,6 +99,9 @@ class VisionWorld:
         # camera, not against this frame's own t_capture, so that a camera whose
         # clock lags slightly cannot expire robots the other cameras still see.
         self._remove_stale_robots(self._timestamp)
+
+    def _update_with_geometry(self, geometry: SSL_GeometryData) -> None:
+        self._field_geometry = FieldGeometry.from_proto(geometry.field)
 
     def _update_ball(self, ball: SSL_DetectionBall) -> None:
         # Convert mm to m
